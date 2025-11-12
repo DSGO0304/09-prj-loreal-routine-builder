@@ -1,308 +1,264 @@
-/* =========================
-   L’Oréal Routine Builder - script.js
-   ========================= */
+// ========= CONFIG =========
+const WORKER_URL = "https://shiny-moon-5e30.dsofiagomezo.workers.dev/";
 
-/* ====== CONFIG ====== */
-const WORKER_URL = "https://shiny-moon-5e30.dsofiagomezo.workers.dev/"; // tu Worker
-const SYSTEM_PROMPT_ROUTINE = `
-You are "L’Oréal Routine Builder"—an assistant that builds personalized beauty
-routines using ONLY the selected L’Oréal-family products provided in the input
-(JSON list with name, brand, category, and description).
-Focus on skincare, haircare, makeup, suncare, and fragrance.
+// Prompt del asistente (solo temas L'Oréal / belleza)
+const SYSTEM_PROMPT = `
+You are "L’Oréal Beauty Chat"—an expert assistant focused ONLY on L’Oréal
+products, routines, and beauty recommendations (skincare, haircare, makeup,
+suncare, fragrance). If the user asks unrelated questions, politely refuse and
+explain you can only help with beauty-related topics for L’Oréal.
 
-Rules:
-- Recommend steps in order (AM/PM if skincare; wash/condition/treat/style if haircare).
-- Use only the provided products; do not invent products.
-- Be concise, friendly, and actionable. No medical claims.
-- Ask clarifying questions if info is missing (skin/hair type, concerns, budget).
-- If asked about unrelated topics, politely refuse and steer back to L’Oréal beauty topics.
+Use the selected products (if any) as the base for personalized routines.
 `;
 
-/* ====== DOM ====== */
+// ========= DOM: productos =========
 const categoryFilter = document.getElementById("categoryFilter");
 const productsContainer = document.getElementById("productsContainer");
-const selectedProductsBox = document.getElementById("selectedProductsList");
-const genBtn = document.getElementById("generateRoutine");
+const selectedProductsList = document.getElementById("selectedProductsList");
+const generateRoutineBtn = document.getElementById("generateRoutine");
 
+// ========= DOM: chat =========
 const chatForm = document.getElementById("chatForm");
-const userInput = document.getElementById("userInput");
 const chatWindow = document.getElementById("chatWindow");
+const userInput = document.getElementById("userInput");
 
-/* ====== STATE ====== */
+// ========= STATE =========
 let allProducts = [];
-let selected = loadSelected(); // desde localStorage
-const messages = [{ role: "system", content: SYSTEM_PROMPT_ROUTINE }];
+let selectedProducts = [];
+const messages = [{ role: "system", content: SYSTEM_PROMPT }];
 
-/* ====== Init ====== */
-init();
+// ========= PRODUCTOS =========
 
-async function init() {
-  // Mensaje de bienvenida
-  addMessage(
-    "👋 Pick products, then click <strong>Generate Routine</strong>. Ask follow-ups any time.",
-    "bot"
-  );
+// Placeholder inicial
+productsContainer.innerHTML = `
+  <div class="placeholder-message">
+    Select a category to view products
+  </div>
+`;
 
-  // Placeholder inicial
-  if (productsContainer) {
-    productsContainer.innerHTML = `<div class="placeholder-message">Select a category to view products</div>`;
-  }
-
-  // Carga de productos
-  allProducts = await loadProducts();
-
-  // Eventos
-  if (categoryFilter) categoryFilter.addEventListener("change", renderProducts);
-  if (genBtn) genBtn.addEventListener("click", onGenerateRoutine);
-  if (chatForm) chatForm.addEventListener("submit", onSendMessage);
-
-  // Render inicial (si ya había seleccionados)
-  renderProducts();
-  renderSelected();
-}
-
-/* ====== Data ====== */
+// Cargar productos desde products.json
 async function loadProducts() {
-  const res = await fetch("products.json");
-  const data = await res.json();
-  return Array.isArray(data) ? data : data.products || [];
+  if (allProducts.length) return allProducts;
+  const response = await fetch("products.json");
+  const data = await response.json();
+  allProducts = data.products;
+  return allProducts;
 }
 
-/* ====== Render ====== */
-function renderProducts() {
-  if (!productsContainer) return;
-
-  const cat = categoryFilter?.value || "";
-  const list = cat ? allProducts.filter((p) => p.category === cat) : [];
-
-  // Replace the product card template so each card includes:
-  // - a Details button (.desc-toggle) with aria attributes
-  // - a hidden description element (.product-desc) that can be toggled
-  productsContainer.innerHTML = list
-    .map((p) => {
-      const isSel = selected.some((s) => s.id === p.id);
-      return `
-      <div class="product-card ${isSel ? "selected" : ""}" data-id="${esc(
-        p.id
-      )}" aria-expanded="false">
-        <img src="${esc(p.image)}" alt="${esc(p.name)}" />
-        <div class="product-info">
-          <h3>${esc(p.name)}</h3>
-          <p>${esc(p.brand)}</p>
-          <span class="pill">${esc(p.category || "")}</span>
-
-          <button class="desc-toggle" aria-expanded="false" aria-controls="desc-${esc(
-            p.id
-          )}">
-            Details
-          </button>
-
-          <div id="desc-${esc(p.id)}" class="product-desc">
-            ${esc(p.description || "No description available.")}
-          </div>
-        </div>
+// Renderizar cards
+function displayProducts(products) {
+  if (!products.length) {
+    productsContainer.innerHTML = `
+      <div class="placeholder-message">
+        No products in this category yet.
       </div>
     `;
-    })
-    .join("");
-
-  // Toggle selección
-  productsContainer.querySelectorAll(".product-card").forEach((card) => {
-    card.addEventListener("click", (ev) => {
-      // If the click originated from the Details button, don't toggle selection
-      if (ev.target.closest(".desc-toggle")) return;
-
-      const id = card.getAttribute("data-id");
-      const prod = allProducts.find((x) => String(x.id) === String(id));
-      if (!prod) return;
-      toggleSelect(prod);
-      card.classList.toggle("selected");
-      renderSelected();
-    });
-  });
-
-  // Delegated listener: open/close description when Details is clicked
-  productsContainer.addEventListener("click", (e) => {
-    const btn = e.target.closest(".desc-toggle");
-    if (!btn) return;
-    const card = btn.closest(".product-card");
-    if (!card) return;
-    const expanded = btn.getAttribute("aria-expanded") === "true";
-    btn.setAttribute("aria-expanded", String(!expanded));
-    card.setAttribute("aria-expanded", String(!expanded));
-    btn.textContent = expanded ? "Details" : "Hide details";
-  });
-
-  if (!cat) {
-    productsContainer.innerHTML = `<div class="placeholder-message">Select a category to view products</div>`;
-  }
-}
-
-function renderSelected() {
-  if (!selectedProductsBox) return;
-
-  if (selected.length === 0) {
-    selectedProductsBox.innerHTML = `<div class="placeholder-small">No products selected yet.</div>`;
     return;
   }
 
-  selectedProductsBox.innerHTML = selected
+  productsContainer.innerHTML = products
+    .map(
+      (product) => `
+      <div class="product-card">
+        <img src="${product.image}" alt="${product.name}">
+        <div class="product-info">
+          <h3>${product.name}</h3>
+          <p class="brand">${product.brand}</p>
+          <button class="description-btn" data-id="${product.id}">
+            View description
+          </button>
+          <button class="select-btn" data-id="${product.id}">
+            + Add to routine
+          </button>
+        </div>
+      </div>
+    `
+    )
+    .join("");
+}
+
+// Filtro por categoría
+categoryFilter.addEventListener("change", async (e) => {
+  const products = await loadProducts();
+  const selectedCategory = e.target.value;
+  const filteredProducts = products.filter(
+    (product) => product.category === selectedCategory
+  );
+  displayProducts(filteredProducts);
+});
+
+// Clicks dentro del grid (add + descripción)
+productsContainer.addEventListener("click", (e) => {
+  const id = e.target.dataset.id;
+  if (!id) return;
+
+  const product = allProducts.find((p) => String(p.id) === String(id));
+  if (!product) return;
+
+  // Ver descripción
+  if (e.target.classList.contains("description-btn")) {
+    alert(`${product.name}\n\n${product.description}`);
+  }
+
+  // Agregar a seleccionados
+  if (e.target.classList.contains("select-btn")) {
+    if (!selectedProducts.some((p) => p.id === product.id)) {
+      selectedProducts.push(product);
+      renderSelectedProducts();
+      saveSelectedProducts();
+    }
+  }
+});
+
+// Mostrar seleccionados
+function renderSelectedProducts() {
+  if (!selectedProducts.length) {
+    selectedProductsList.innerHTML = `<p class="placeholder-message">No products selected yet.</p>`;
+    return;
+  }
+
+  selectedProductsList.innerHTML = selectedProducts
     .map(
       (p) => `
-    <div class="selected-item" data-id="${esc(p.id)}">
-      <img src="${esc(p.image)}" alt="${esc(p.name)}" />
-      <div class="meta">
-        <div class="brand">${esc(p.brand)}</div>
-        <div class="name">${esc(p.name)}</div>
+      <div class="selected-item">
+        <span>${p.name}</span>
+        <button class="remove-selected" data-id="${p.id}">Remove</button>
       </div>
-      <button class="remove-btn" aria-label="Remove">Remove</button>
-    </div>
-  `
+    `
     )
     .join("");
 
-  selectedProductsBox.querySelectorAll(".remove-btn").forEach((btn) => {
-    btn.addEventListener("click", (e) => {
-      const card = e.currentTarget.closest(".selected-item");
-      const id = card?.getAttribute("data-id");
-      selected = selected.filter((x) => String(x.id) !== String(id));
-      saveSelected(selected);
-      renderProducts();
-      renderSelected();
+  // botón "Clear all"
+  if (!document.getElementById("clearSelected")) {
+    const clearBtn = document.createElement("button");
+    clearBtn.id = "clearSelected";
+    clearBtn.className = "clear-btn";
+    clearBtn.textContent = "Clear all";
+    clearBtn.addEventListener("click", () => {
+      selectedProducts = [];
+      renderSelectedProducts();
+      saveSelectedProducts();
     });
-  });
+    selectedProductsList.parentElement.appendChild(clearBtn);
+  }
 }
 
-/* ====== Selección ====== */
-function toggleSelect(prod) {
-  const exists = selected.some((p) => p.id === prod.id);
-  if (exists) {
-    selected = selected.filter((p) => p.id !== prod.id);
-  } else {
-    selected.push(prod);
-  }
-  saveSelected(selected);
+// Eliminar uno de la lista seleccionada
+selectedProductsList.addEventListener("click", (e) => {
+  if (!e.target.classList.contains("remove-selected")) return;
+  const id = e.target.dataset.id;
+  selectedProducts = selectedProducts.filter(
+    (p) => String(p.id) !== String(id)
+  );
+  renderSelectedProducts();
+  saveSelectedProducts();
+});
+
+// Guardar en localStorage
+function saveSelectedProducts() {
+  localStorage.setItem("lorealSelectedProducts", JSON.stringify(selectedProducts));
 }
-function saveSelected(list) {
-  localStorage.setItem("loreal_selected_v1", JSON.stringify(list));
-}
-function loadSelected() {
+
+// Cargar de localStorage
+function loadSelectedProducts() {
+  const stored = localStorage.getItem("lorealSelectedProducts");
+  if (!stored) return;
   try {
-    return JSON.parse(localStorage.getItem("loreal_selected_v1")) || [];
-  } catch {
-    return [];
+    selectedProducts = JSON.parse(stored) || [];
+    renderSelectedProducts();
+  } catch (e) {
+    console.error("Error parsing saved products", e);
   }
 }
+loadSelectedProducts();
 
-/* ====== Generate Routine ====== */
-async function onGenerateRoutine() {
-  if (selected.length === 0) {
-    addMessage(
-      "Please select at least one product to build your routine.",
-      "bot"
-    );
+// ========= CHAT & WORKER =========
+
+// Mensaje de bienvenida
+addMessage(
+  "👋 Hi! I’m your L’Oréal beauty assistant. Ask me about products or routines and I’ll tailor suggestions for you.",
+  "bot"
+);
+
+// Generar rutina con los productos seleccionados
+generateRoutineBtn.addEventListener("click", async () => {
+  if (!selectedProducts.length) {
+    addMessage("Please select at least one product before generating a routine.", "bot");
     return;
   }
 
-  const minimal = selected.map(
-    ({ id, name, brand, category, description }) => ({
-      id,
-      name,
-      brand,
-      category,
-      description,
-    })
-  );
+  const productSummary = selectedProducts
+    .map((p) => `${p.name} (${p.category})`)
+    .join(", ");
 
-  const userMsg = `Build a personalized routine using ONLY these products:\n${JSON.stringify(
-    minimal
-  )}`;
-  messages.push({ role: "user", content: userMsg });
+  const userText = `Create a full routine using these selected products: ${productSummary}. Explain step by step (AM/PM) and how each product should be used.`;
 
-  addMessage("🧪 Generating your routine…", "bot");
+  await sendToAssistant(userText);
+});
 
-  const reply = await callAI(messages);
-  addMessage(reply, "bot");
-  messages.push({ role: "assistant", content: reply });
-}
-
-/* ====== Chat Follow-up ====== */
-async function onSendMessage(e) {
+// Enviar mensaje desde el input del chat
+chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const text = userInput.value.trim();
-  if (!text) return;
-
-  addMessage(text, "user");
+  const userText = userInput.value.trim();
+  if (!userText) return;
   userInput.value = "";
+  await sendToAssistant(userText);
+});
 
-  // Contexto breve: seleccionados actuales (solo id, name, brand, category)
-  const contextNote = selected.length
-    ? `Context: selected products = ${JSON.stringify(
-        selected.map(({ id, name, brand, category }) => ({
-          id,
-          name,
-          brand,
-          category,
-        }))
-      )}`
-    : `Context: no selected products yet.`;
+// Función principal para mandar mensajes al Worker
+async function sendToAssistant(userText) {
+  // Mostrar mensaje de usuario en UI
+  addMessage(userText, "user");
 
-  const turn = [
-    { role: "system", content: SYSTEM_PROMPT_ROUTINE },
-    { role: "system", content: contextNote },
-    ...messages.filter((m) => m.role !== "system"),
-    { role: "user", content: text },
-  ];
+  // Añadir al historial
+  messages.push({ role: "user", content: userText });
 
-  const reply = await callAI(turn);
-  addMessage(reply, "bot");
+  // Deshabilitar input mientras responde
+  setComposerEnabled(false);
 
-  messages.push({ role: "user", content: text });
-  messages.push({ role: "assistant", content: reply });
-}
-
-/* ====== Worker Call ====== */
-async function callAI(msgs) {
   try {
-    const r = await fetch(WORKER_URL, {
+    const resp = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: msgs }),
+      body: JSON.stringify({
+        messages: messages,
+        useWeb: true // 🔥 aquí activas Tavily Web Search
+      }),
     });
-    const raw = await r.text();
-    let data;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return `⚠️ Worker returned non-JSON: ${raw}`;
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      throw new Error(`Worker HTTP ${resp.status}: ${txt}`);
     }
-    return (
-      data.reply ??
+
+    const data = await resp.json();
+    const botText =
       data.choices?.[0]?.message?.content ??
-      "Sorry—no response was returned."
-    );
+      data.reply ??
+      "Sorry—no response was returned.";
+
+    addMessage(botText, "bot");
+    messages.push({ role: "assistant", content: botText });
   } catch (err) {
-    return `⚠️ Error: ${err.message}`;
+    console.error(err);
+    addMessage(`⚠️ Error: ${err.message}`, "bot");
+  } finally {
+    setComposerEnabled(true);
   }
 }
 
-/* ====== Chat UI helpers ====== */
+// Helpers UI
 function addMessage(text, who = "bot") {
-  if (!chatWindow) return;
   const div = document.createElement("div");
   div.className = `msg ${who}`;
-  div.innerHTML = sanitize(text).replace(/\n/g, "<br>");
+  div.textContent = text;
   chatWindow.appendChild(div);
   chatWindow.scrollTop = chatWindow.scrollHeight;
 }
-function sanitize(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/&lt;strong&gt;/g, "<strong>")
-    .replace(/&lt;\/strong&gt;/g, "</strong>");
-}
-function esc(s) {
-  return sanitize(s);
+
+function setComposerEnabled(enabled) {
+  userInput.disabled = !enabled;
+  const btn = document.getElementById("sendBtn");
+  if (btn) btn.disabled = !enabled;
+  if (enabled) userInput.focus();
 }
