@@ -16,15 +16,22 @@ const categoryFilter = document.getElementById("categoryFilter");
 const productsContainer = document.getElementById("productsContainer");
 const selectedProductsList = document.getElementById("selectedProductsList");
 const generateRoutineBtn = document.getElementById("generateRoutine");
+const productSearch = document.getElementById("productSearch");
+const clearSelectedBtn = document.getElementById("clearSelected");
 
-// ========= DOM: chat =========
+// ========= DOM: chat / toggles =========
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
 const userInput = document.getElementById("userInput");
+const lastQEl = document.getElementById("lastQuestion");
+const webMode = document.getElementById("webMode");
+const rtlToggle = document.getElementById("rtlToggle");
 
 // ========= STATE =========
 let allProducts = [];
 let selectedProducts = [];
+let currentCategory = "";
+let currentSearch = "";
 const messages = [{ role: "system", content: SYSTEM_PROMPT }];
 
 // ========= PRODUCTOS =========
@@ -36,7 +43,7 @@ productsContainer.innerHTML = `
   </div>
 `;
 
-// Cargar productos desde products.json
+// Cargar productos desde products.json (solo una vez)
 async function loadProducts() {
   if (allProducts.length) return allProducts;
   const response = await fetch("products.json");
@@ -50,7 +57,7 @@ function displayProducts(products) {
   if (!products.length) {
     productsContainer.innerHTML = `
       <div class="placeholder-message">
-        No products in this category yet.
+        No products match your filters yet.
       </div>
     `;
     return;
@@ -59,7 +66,7 @@ function displayProducts(products) {
   productsContainer.innerHTML = products
     .map(
       (product) => `
-      <div class="product-card">
+      <div class="product-card" data-id="${product.id}">
         <img src="${product.image}" alt="${product.name}">
         <div class="product-info">
           <h3>${product.name}</h3>
@@ -77,14 +84,39 @@ function displayProducts(products) {
     .join("");
 }
 
+// Actualizar grid según categoría + búsqueda
+async function updateProductGrid() {
+  const products = await loadProducts();
+
+  let filtered = products;
+
+  if (currentCategory) {
+    filtered = filtered.filter((p) => p.category === currentCategory);
+  }
+
+  if (currentSearch.trim() !== "") {
+    const q = currentSearch.toLowerCase();
+    filtered = filtered.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        p.brand.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q)
+    );
+  }
+
+  displayProducts(filtered);
+}
+
 // Filtro por categoría
 categoryFilter.addEventListener("change", async (e) => {
-  const products = await loadProducts();
-  const selectedCategory = e.target.value;
-  const filteredProducts = products.filter(
-    (product) => product.category === selectedCategory
-  );
-  displayProducts(filteredProducts);
+  currentCategory = e.target.value;
+  updateProductGrid();
+});
+
+// Búsqueda por texto (LevelUp)
+productSearch.addEventListener("input", (e) => {
+  currentSearch = e.target.value;
+  updateProductGrid();
 });
 
 // Clicks dentro del grid (add + descripción)
@@ -113,7 +145,8 @@ productsContainer.addEventListener("click", (e) => {
 // Mostrar seleccionados
 function renderSelectedProducts() {
   if (!selectedProducts.length) {
-    selectedProductsList.innerHTML = `<p class="placeholder-message">No products selected yet.</p>`;
+    selectedProductsList.innerHTML =
+      `<p class="placeholder-message">No products selected yet.</p>`;
     return;
   }
 
@@ -121,31 +154,20 @@ function renderSelectedProducts() {
     .map(
       (p) => `
       <div class="selected-item">
-        <span>${p.name}</span>
-        <button class="remove-selected" data-id="${p.id}">Remove</button>
+        <div>
+          <div class="name">${p.name}</div>
+          <div class="brand">${p.brand}</div>
+        </div>
+        <button class="remove-btn" data-id="${p.id}">Remove</button>
       </div>
     `
     )
     .join("");
-
-  // botón "Clear all"
-  if (!document.getElementById("clearSelected")) {
-    const clearBtn = document.createElement("button");
-    clearBtn.id = "clearSelected";
-    clearBtn.className = "clear-btn";
-    clearBtn.textContent = "Clear all";
-    clearBtn.addEventListener("click", () => {
-      selectedProducts = [];
-      renderSelectedProducts();
-      saveSelectedProducts();
-    });
-    selectedProductsList.parentElement.appendChild(clearBtn);
-  }
 }
 
 // Eliminar uno de la lista seleccionada
 selectedProductsList.addEventListener("click", (e) => {
-  if (!e.target.classList.contains("remove-selected")) return;
+  if (!e.target.classList.contains("remove-btn")) return;
   const id = e.target.dataset.id;
   selectedProducts = selectedProducts.filter(
     (p) => String(p.id) !== String(id)
@@ -154,12 +176,22 @@ selectedProductsList.addEventListener("click", (e) => {
   saveSelectedProducts();
 });
 
+// Botón "Clear All" ya existente en el HTML
+clearSelectedBtn.addEventListener("click", () => {
+  selectedProducts = [];
+  renderSelectedProducts();
+  saveSelectedProducts();
+});
+
 // Guardar en localStorage
 function saveSelectedProducts() {
-  localStorage.setItem("lorealSelectedProducts", JSON.stringify(selectedProducts));
+  localStorage.setItem(
+    "lorealSelectedProducts",
+    JSON.stringify(selectedProducts)
+  );
 }
 
-// Cargar de localStorage
+// Cargar de localStorage al inicio
 function loadSelectedProducts() {
   const stored = localStorage.getItem("lorealSelectedProducts");
   if (!stored) return;
@@ -172,6 +204,11 @@ function loadSelectedProducts() {
 }
 loadSelectedProducts();
 
+// ========= RTL TOGGLE =========
+rtlToggle.addEventListener("change", () => {
+  document.documentElement.dir = rtlToggle.checked ? "rtl" : "ltr";
+});
+
 // ========= CHAT & WORKER =========
 
 // Mensaje de bienvenida
@@ -183,7 +220,10 @@ addMessage(
 // Generar rutina con los productos seleccionados
 generateRoutineBtn.addEventListener("click", async () => {
   if (!selectedProducts.length) {
-    addMessage("Please select at least one product before generating a routine.", "bot");
+    addMessage(
+      "Please select at least one product before generating a routine.",
+      "bot"
+    );
     return;
   }
 
@@ -210,11 +250,19 @@ async function sendToAssistant(userText) {
   // Mostrar mensaje de usuario en UI
   addMessage(userText, "user");
 
+  // Actualizar "última pregunta"
+  if (lastQEl) {
+    lastQEl.textContent = `Your last question: “${userText}”`;
+  }
+
   // Añadir al historial
   messages.push({ role: "user", content: userText });
 
   // Deshabilitar input mientras responde
   setComposerEnabled(false);
+
+  // ¿Web search activado?
+  const useWebFlag = webMode ? webMode.checked : false;
 
   try {
     const resp = await fetch(WORKER_URL, {
@@ -222,7 +270,7 @@ async function sendToAssistant(userText) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: messages,
-        useWeb: true // 🔥 aquí activas Tavily Web Search
+        useWeb: useWebFlag, // 🔥 aquí activas / desactivas Tavily Web Search
       }),
     });
 
