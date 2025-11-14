@@ -11,27 +11,27 @@ explain you can only help with beauty-related topics for L’Oréal.
 Use the selected products (if any) as the base for personalized routines.
 `;
 
-// ========= DOM: productos =========
+// ========= DOM: PRODUCTOS =========
 const categoryFilter = document.getElementById("categoryFilter");
+const productSearch = document.getElementById("productSearch");
 const productsContainer = document.getElementById("productsContainer");
 const selectedProductsList = document.getElementById("selectedProductsList");
 const generateRoutineBtn = document.getElementById("generateRoutine");
-const productSearch = document.getElementById("productSearch");
 const clearSelectedBtn = document.getElementById("clearSelected");
 
-// ========= DOM: chat / toggles =========
+// ========= DOM: CHAT =========
 const chatForm = document.getElementById("chatForm");
 const chatWindow = document.getElementById("chatWindow");
 const userInput = document.getElementById("userInput");
 const lastQEl = document.getElementById("lastQuestion");
-const webMode = document.getElementById("webMode");
+
+// ========= DOM: TOGGLES (EXTRA) =========
 const rtlToggle = document.getElementById("rtlToggle");
+const webModeToggle = document.getElementById("webMode");
 
 // ========= STATE =========
 let allProducts = [];
 let selectedProducts = [];
-let currentCategory = "";
-let currentSearch = "";
 const messages = [{ role: "system", content: SYSTEM_PROMPT }];
 
 // ========= PRODUCTOS =========
@@ -43,13 +43,34 @@ productsContainer.innerHTML = `
   </div>
 `;
 
-// Cargar productos desde products.json (solo una vez)
+// Cargar productos desde products.json
 async function loadProducts() {
   if (allProducts.length) return allProducts;
   const response = await fetch("products.json");
   const data = await response.json();
   allProducts = data.products;
   return allProducts;
+}
+
+// Función que aplica Filtro de categoría + búsqueda por texto
+function getFilteredProducts() {
+  const category = categoryFilter.value;
+  const query = productSearch.value.trim().toLowerCase();
+
+  return allProducts.filter((product) => {
+    const matchCategory = category ? product.category === category : true;
+
+    const hayTexto = query.length > 0;
+    const matchText = !hayTexto
+      ? true
+      : (
+          product.name.toLowerCase().includes(query) ||
+          product.brand.toLowerCase().includes(query) ||
+          product.description.toLowerCase().includes(query)
+        );
+
+    return matchCategory && matchText;
+  });
 }
 
 // Renderizar cards
@@ -66,7 +87,9 @@ function displayProducts(products) {
   productsContainer.innerHTML = products
     .map(
       (product) => `
-      <div class="product-card" data-id="${product.id}">
+      <div class="product-card ${
+        selectedProducts.some((p) => p.id === product.id) ? "selected" : ""
+      }" data-id="${product.id}">
         <img src="${product.image}" alt="${product.name}">
         <div class="product-info">
           <h3>${product.name}</h3>
@@ -75,7 +98,11 @@ function displayProducts(products) {
             View description
           </button>
           <button class="select-btn" data-id="${product.id}">
-            + Add to routine
+            ${
+              selectedProducts.some((p) => p.id === product.id)
+                ? "✓ In routine"
+                : "+ Add to routine"
+            }
           </button>
         </div>
       </div>
@@ -84,42 +111,21 @@ function displayProducts(products) {
     .join("");
 }
 
-// Actualizar grid según categoría + búsqueda
-async function updateProductGrid() {
-  const products = await loadProducts();
-
-  let filtered = products;
-
-  if (currentCategory) {
-    filtered = filtered.filter((p) => p.category === currentCategory);
-  }
-
-  if (currentSearch.trim() !== "") {
-    const q = currentSearch.toLowerCase();
-    filtered = filtered.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.brand.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q)
-    );
-  }
-
-  displayProducts(filtered);
-}
-
 // Filtro por categoría
-categoryFilter.addEventListener("change", async (e) => {
-  currentCategory = e.target.value;
-  updateProductGrid();
+categoryFilter.addEventListener("change", async () => {
+  await loadProducts();
+  const filtered = getFilteredProducts();
+  displayProducts(filtered);
 });
 
-// Búsqueda por texto (LevelUp)
-productSearch.addEventListener("input", (e) => {
-  currentSearch = e.target.value;
-  updateProductGrid();
+// Búsqueda por texto (Product Search LevelUp)
+productSearch.addEventListener("input", async () => {
+  await loadProducts();
+  const filtered = getFilteredProducts();
+  displayProducts(filtered);
 });
 
-// Clicks dentro del grid (add + descripción)
+// Clicks dentro del grid: descripción + toggle selección
 productsContainer.addEventListener("click", (e) => {
   const id = e.target.dataset.id;
   if (!id) return;
@@ -130,19 +136,43 @@ productsContainer.addEventListener("click", (e) => {
   // Ver descripción
   if (e.target.classList.contains("description-btn")) {
     alert(`${product.name}\n\n${product.description}`);
+    return;
   }
 
-  // Agregar a seleccionados
+  // Toggle selección
   if (e.target.classList.contains("select-btn")) {
-    if (!selectedProducts.some((p) => p.id === product.id)) {
+    const alreadySelected = selectedProducts.some(
+      (p) => String(p.id) === String(product.id)
+    );
+
+    const card = e.target.closest(".product-card");
+
+    if (alreadySelected) {
+      // Quitar de la lista
+      selectedProducts = selectedProducts.filter(
+        (p) => String(p.id) !== String(product.id)
+      );
+      // Actualizar UI en card
+      if (card) {
+        card.classList.remove("selected");
+        e.target.textContent = "+ Add to routine";
+      }
+    } else {
+      // Agregar a la lista
       selectedProducts.push(product);
-      renderSelectedProducts();
-      saveSelectedProducts();
+      // Actualizar UI en card
+      if (card) {
+        card.classList.add("selected");
+        e.target.textContent = "✓ In routine";
+      }
     }
+
+    renderSelectedProducts();
+    saveSelectedProducts();
   }
 });
 
-// Mostrar seleccionados
+// Mostrar productos seleccionados
 function renderSelectedProducts() {
   if (!selectedProducts.length) {
     selectedProductsList.innerHTML =
@@ -165,23 +195,45 @@ function renderSelectedProducts() {
     .join("");
 }
 
-// Eliminar uno de la lista seleccionada
+// Eliminar uno desde la lista
 selectedProductsList.addEventListener("click", (e) => {
   if (!e.target.classList.contains("remove-btn")) return;
+
   const id = e.target.dataset.id;
-  selectedProducts = selectedProducts.filter(
-    (p) => String(p.id) !== String(id)
-  );
+  selectedProducts = selectedProducts.filter((p) => String(p.id) !== String(id));
+
+  // Volver a dibujar lista
   renderSelectedProducts();
   saveSelectedProducts();
+
+  // También actualizar las cards visibles (quitar estado "selected")
+  const cards = productsContainer.querySelectorAll(".product-card");
+  cards.forEach((card) => {
+    const cardId = card.getAttribute("data-id");
+    const btn = card.querySelector(".select-btn");
+    if (String(cardId) === String(id)) {
+      card.classList.remove("selected");
+      if (btn) btn.textContent = "+ Add to routine";
+    }
+  });
 });
 
-// Botón "Clear All" ya existente en el HTML
-clearSelectedBtn.addEventListener("click", () => {
-  selectedProducts = [];
-  renderSelectedProducts();
-  saveSelectedProducts();
-});
+// "Clear All" para vaciar todo
+if (clearSelectedBtn) {
+  clearSelectedBtn.addEventListener("click", () => {
+    selectedProducts = [];
+    renderSelectedProducts();
+    saveSelectedProducts();
+
+    // Quitar estado selected en las cards
+    const cards = productsContainer.querySelectorAll(".product-card");
+    cards.forEach((card) => {
+      card.classList.remove("selected");
+      const btn = card.querySelector(".select-btn");
+      if (btn) btn.textContent = "+ Add to routine";
+    });
+  });
+}
 
 // Guardar en localStorage
 function saveSelectedProducts() {
@@ -191,8 +243,8 @@ function saveSelectedProducts() {
   );
 }
 
-// Cargar de localStorage al inicio
-function loadSelectedProducts() {
+// Cargar desde localStorage al inicio
+function loadSelectedProductsFromStorage() {
   const stored = localStorage.getItem("lorealSelectedProducts");
   if (!stored) return;
   try {
@@ -202,12 +254,7 @@ function loadSelectedProducts() {
     console.error("Error parsing saved products", e);
   }
 }
-loadSelectedProducts();
-
-// ========= RTL TOGGLE =========
-rtlToggle.addEventListener("change", () => {
-  document.documentElement.dir = rtlToggle.checked ? "rtl" : "ltr";
-});
+loadSelectedProductsFromStorage();
 
 // ========= CHAT & WORKER =========
 
@@ -227,33 +274,42 @@ generateRoutineBtn.addEventListener("click", async () => {
     return;
   }
 
-  const productSummary = selectedProducts
-    .map((p) => `${p.name} (${p.category})`)
-    .join(", ");
+  // JSON compacto de los productos
+  const productPayload = selectedProducts.map((p) => ({
+    name: p.name,
+    brand: p.brand,
+    category: p.category,
+    description: p.description,
+  }));
 
-  const userText = `Create a full routine using these selected products: ${productSummary}. Explain step by step (AM/PM) and how each product should be used.`;
+  const userText =
+    "Using ONLY these products (JSON below), create a full routine. " +
+    "Explain clearly which products to use in the AM and PM, in order, " +
+    "and give 1–2 sentences per step:\n\n" +
+    JSON.stringify(productPayload, null, 2);
 
   await sendToAssistant(userText);
 });
 
-// Enviar mensaje desde el input del chat
+// Enviar mensaje escrito por el usuario
 chatForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const userText = userInput.value.trim();
   if (!userText) return;
+
   userInput.value = "";
   await sendToAssistant(userText);
 });
 
 // Función principal para mandar mensajes al Worker
 async function sendToAssistant(userText) {
-  // Mostrar mensaje de usuario en UI
-  addMessage(userText, "user");
-
-  // Actualizar "última pregunta"
+  // Mostrar pregunta arriba de la respuesta
   if (lastQEl) {
     lastQEl.textContent = `Your last question: “${userText}”`;
   }
+
+  // Mostrar mensaje de usuario
+  addMessage(userText, "user");
 
   // Añadir al historial
   messages.push({ role: "user", content: userText });
@@ -261,16 +317,15 @@ async function sendToAssistant(userText) {
   // Deshabilitar input mientras responde
   setComposerEnabled(false);
 
-  // ¿Web search activado?
-  const useWebFlag = webMode ? webMode.checked : false;
-
   try {
+    const useWeb = webModeToggle ? webModeToggle.checked : false;
+
     const resp = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: messages,
-        useWeb: useWebFlag, // 🔥 aquí activas / desactivas Tavily Web Search
+        useWeb: useWeb, // 🔥 solo usa web search si el switch está activado
       }),
     });
 
@@ -310,3 +365,12 @@ function setComposerEnabled(enabled) {
   if (btn) btn.disabled = !enabled;
   if (enabled) userInput.focus();
 }
+
+// ========= RTL TOGGLE =========
+if (rtlToggle) {
+  rtlToggle.addEventListener("change", (e) => {
+    const isRTL = e.target.checked;
+    document.documentElement.setAttribute("dir", isRTL ? "rtl" : "ltr");
+  });
+}
+
